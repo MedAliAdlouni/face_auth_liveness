@@ -1,21 +1,115 @@
+import torch
+import os
+import pickle
 import cv2
+from PIL import Image
+from time import time
 import numpy as np
-from collections import deque
-import time
 
-from src.liveness.liveness_detector import LivenessDetector
 
-def detect_liveness(duration=10):
-    # Initialize webcam
+from src.liveness.liveness_detection import LivenessDetector
+
+# Configuration
+EMBEDDINGS_DIR = "data/embeddings"  # Directory to store user embeddings
+os.makedirs(EMBEDDINGS_DIR, exist_ok=True)
+
+
+def get_embedding_path(first_name, last_name):
+    """
+    Generate the file path for storing/loading user embedding.
+    
+    Args:
+        first_name: User's first name
+        last_name: User's last name
+        
+    Returns:
+        str: Path to the embedding file
+    """
+    filename = f"{first_name.lower()}_{last_name.lower()}.pkl"
+    return os.path.join(EMBEDDINGS_DIR, filename)
+
+
+def compare_embeddings(emb1, emb2, threshold=0.70):  # LOWERED from 0.85
+    """
+    Compute cosine similarity between two face embeddings.
+    """
+    emb1 = emb1.squeeze()
+    emb2 = emb2.squeeze()
+
+    cos_sim = torch.nn.functional.cosine_similarity(emb1, emb2, dim=0).item()
+    return cos_sim, cos_sim >= threshold
+
+
+def load_user_embedding(first_name, last_name):
+    """
+    Load a user's stored embedding from file.
+    
+    Args:
+        first_name: User's first name
+        last_name: User's last name
+        
+    Returns:
+        torch.Tensor: User's face embedding or None if not found
+    """
+    embedding_path = get_embedding_path(first_name, last_name)
+    
+    if not os.path.exists(embedding_path):
+        return None
+    
+    with open(embedding_path, 'rb') as f:
+        user_data = pickle.load(f)
+    
+    return user_data['embedding']
+
+
+
+def upload_image(*args):
+    """
+    Upload image either from webcam or from provided path.
+    Args:
+        *args: If provided, should contain the image path.
+    Returns:
+        PIL.Image: Loaded image
+    """
+    image_choice = input("Use provided image path? If not, take image with webcam (y/n): ").strip().lower()
+    if image_choice == 'n':
+        print("\nOpening webcam... (photo will be taken in 5 seconds)")
+        cam = cv2.VideoCapture(0)
+        for i in range(5, 0, -1):
+            ret, frame = cam.read()
+            frame_display = frame.copy()
+            cv2.putText(frame_display, f"{i}", (50, 80), cv2.FONT_HERSHEY_SIMPLEX, 3, (0,0,255), 4)
+            cv2.imshow("Webcam", frame_display)
+            cv2.waitKey(1000)
+
+        # Capture final frame
+        ret, frame = cam.read()
+        cam.release()
+        cv2.destroyAllWindows()
+
+        img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        print("Image captured!")
+    else:        
+        img = Image.open(input("Enter path to face image: ")).convert('RGB')
+    
+    return img
+
+
+
+def liveness_detection(duration=10):
+        # Initialize webcam
     cap = cv2.VideoCapture(0)
+    
+    if not cap.isOpened():
+        raise RuntimeError("Failed to open webcam")
+    
     detector = LivenessDetector()
     
     print("Face Liveness Detection Started")    
-    # Timer settings
     start_time = time.time()
     
-    # Store results for final analysis
     all_results = []
+    captured_frames = []
     face_detected_frames = 0
     
     while True:
@@ -23,17 +117,17 @@ def detect_liveness(duration=10):
         if not ret:
             break
         
-        # Calculate remaining time
         elapsed = time.time() - start_time
         remaining = max(0, duration - elapsed)
         
-        # Check if time is up
         if remaining == 0:
             break
         
-        # Flip frame for mirror effect
         frame = cv2.flip(frame, 1)
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
+        # Store frame
+        captured_frames.append(frame.copy())
         
         # Detect faces
         faces = detector.face_cascade.detectMultiScale(
@@ -44,16 +138,13 @@ def detect_liveness(duration=10):
             face_detected_frames += 1
         
         for (x, y, w, h) in faces:
-            # Determine if real or fake
             is_real, metrics = detector.is_real_face(frame, (x, y, w, h))
             
-            # Store results
             all_results.append({
                 'is_real': is_real,
                 'metrics': metrics
             })
             
-            # Draw rectangle and label
             color = (0, 255, 0) if is_real else (0, 0, 255)
             label = "REAL" if is_real else "FAKE/SPOOF"
             
@@ -61,7 +152,6 @@ def detect_liveness(duration=10):
             cv2.putText(frame, label, (x, y-10), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
             
-            # Display live metrics
             y_offset = y + h + 25
             line_height = 18
             
@@ -74,13 +164,11 @@ def detect_liveness(duration=10):
             cv2.putText(frame, f"Score: {metrics['total_score']}/{metrics['max_score']}", 
                        (x, y_offset + line_height*5), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
         
-        # Display countdown timer (large and prominent)
         countdown_text = f"{int(remaining)}"
         cv2.putText(frame, countdown_text, (frame.shape[1]//2 - 30, 80), 
                    cv2.FONT_HERSHEY_SIMPLEX, 2.5, (0, 255, 255), 4)
         
-        # Display instructions
-        cv2.putText(frame, "Smile, life is beautiful :) ", 
+        cv2.putText(frame, "Our AGI is checking if you are real or not ... ", 
                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         
         cv2.imshow('Face Liveness Detection', frame)
@@ -91,22 +179,38 @@ def detect_liveness(duration=10):
     cap.release()
     cv2.destroyAllWindows()
 
-    # Analyze results
+    return detector, all_results, captured_frames
+
+
+
+
+def analyze_liveness_results(all_results, detector):
+    """
+    Perform liveness detection and capture frames for face verification.
+    
+    Args:
+        duration: Duration of liveness detection in seconds
+        
+    Returns:
+        tuple: (liveness_passed, captured_frames, liveness_confidence)
+    """
+
+    # Analyze liveness results
+    liveness_passed = False
+    liveness_confidence = 0.0
+    
     if all_results:
         print("\n" + "="*60)
         print("LIVENESS DETECTION RESULT")
         print("="*60)
         
-        # Calculate statistics
         real_count = sum(1 for r in all_results if r['is_real'])
         total_count = len(all_results)
         
         avg_texture = np.mean([r['metrics']['texture_score'] for r in all_results])
         avg_motion = np.mean([r['metrics']['motion_score'] for r in all_results])
-        avg_brightness = np.mean([r['metrics']['brightness_std'] for r in all_results])
         screen_detections = sum(1 for r in all_results if r['metrics']['is_screen_like'])
         
-        # Evaluation criteria
         texture_ok = avg_texture > detector.texture_threshold
         motion_ok = 2 < avg_motion < 80
         screen_ok = screen_detections < (total_count * 0.3)
@@ -115,17 +219,18 @@ def detect_liveness(duration=10):
         probability = (real_count / total_count) * 100
         
         final_verdict = "REAL" if criteria_passed >= 2 and probability >= 60 else "FAKE"
-        confidence = min(probability, 95) if final_verdict == "REAL" else max(100 - probability, 60)
+        liveness_passed = (final_verdict == "REAL")
+        liveness_confidence = min(probability, 95) if liveness_passed else max(100 - probability, 60)
         
         print(f"\nVerdict: {final_verdict}")
-        print(f"Confidence: {confidence:.1f}%\n")
+        print(f"Confidence: {liveness_confidence:.1f}%\n")
         
         print(f"Texture: {avg_texture:.1f} (need >{detector.texture_threshold}) {'✓' if texture_ok else '✗'}")
         print(f"Motion: {avg_motion:.1f} (need 2-80) {'✓' if motion_ok else '✗'}")
         print(f"Screen-like: {screen_detections}/{total_count} frames {'✓' if screen_ok else '✗'}")
         
         print(f"\nReason: ", end="")
-        if final_verdict == "REAL":
+        if liveness_passed:
             reasons = []
             if texture_ok: reasons.append("natural texture")
             if motion_ok: reasons.append("natural motion")
@@ -138,10 +243,8 @@ def detect_liveness(duration=10):
             if not screen_ok: reasons.append("screen detected")
             print(", ".join(reasons))
         
-        print("="*60)
+        print("="*60 + "\n")
     else:
-        print("\n No face detected!")
-
-
-if __name__ == "__main__":
-    detect_liveness()
+        print("\n✗ No face detected during liveness check!")
+    
+    return liveness_passed, liveness_confidence
