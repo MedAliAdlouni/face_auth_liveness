@@ -3,3 +3,7 @@
 /assets
 /face
 /.vscode
+
+ds_model_vggface_detector_opencv_aligned_normalization_base_expand_0.pkl
+
+IMPLEMENTATION_GUIDE.md
