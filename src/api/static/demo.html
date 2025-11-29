@@ -1,0 +1,71 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Face Auth Demo</title>
+  <style>body{font-family:Arial;margin:20px;}video{border:1px solid #ccc}</style>
+</head>
+<body>
+  <h2>Browser Demo — Capture frames and authenticate</h2>
+  <label>First name: <input id="first" value="a"></label>
+  <label>Last name: <input id="last" value="z"></label>
+  <div>
+    <video id="video" width="320" height="240" autoplay muted></video>
+  </div>
+  <div style="margin-top:10px">
+    <button id="capture">Capture & Authenticate (8 frames)</button>
+  </div>
+  <pre id="output"></pre>
+
+<script>
+const video = document.getElementById('video');
+const output = document.getElementById('output');
+
+async function startCamera(){
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({video:true,audio:false});
+    video.srcObject = stream;
+  }catch(e){
+    output.textContent = 'Camera error: '+e;
+  }
+}
+
+function captureFrame(){
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth || 320;
+  canvas.height = video.videoHeight || 240;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video,0,0,canvas.width,canvas.height);
+  return new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',0.9));
+}
+
+document.getElementById('capture').addEventListener('click', async ()=>{
+  const first = document.getElementById('first').value;
+  const last = document.getElementById('last').value;
+  output.textContent = 'Capturing frames...';
+  const blobs = [];
+  for(let i=0;i<8;i++){
+    const b = await captureFrame();
+    blobs.push(b);
+    await new Promise(r=>setTimeout(r,150));
+  }
+  output.textContent = 'Uploading frames...';
+  const fd = new FormData();
+  fd.append('first_name', first);
+  fd.append('last_name', last);
+  fd.append('similarity_threshold', '0.65');
+  blobs.forEach((b,i)=>fd.append('files', b, `frame${i}.jpg`));
+
+  try{
+    const res = await fetch('/authenticate_frames', {method:'POST', body: fd});
+    const data = await res.json();
+    output.textContent = JSON.stringify(data, null, 2);
+  }catch(e){
+    output.textContent = 'Request error: '+e;
+  }
+});
+
+startCamera();
+</script>
+</body>
+</html>

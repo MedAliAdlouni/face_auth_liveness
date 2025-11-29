@@ -1,14 +1,10 @@
-from PIL import Image
-import os
-import time
-import pickle
-import cv2
 import traceback
 traceback.print_exc()
 
 from src.detectors.face_detector import detect_face
 from src.embedding.face_embedding import extract_face_embedding
-from src.utils.helpers import get_embedding_path, upload_image
+from src.utils.io import upload_image
+from src.db import save_user_embedding
 
 
 def register_pipeline(first_name, last_name, img):
@@ -47,27 +43,18 @@ def register_pipeline(first_name, last_name, img):
         embedding = extract_face_embedding(face_tensor)
         print(f"✓ Embedding extracted (shape: {embedding.shape})")
         
-        # Step 3: Save embedding
-        print("\n[3/3] Saving embedding...")
-        embedding_path = get_embedding_path(first_name, last_name)
-                
-        # Save embedding to file
-        user_data = {
-            'first_name': first_name,
-            'last_name': last_name,
-            'embedding': embedding,
-            'registration_date': time.strftime('%Y-%m-%d %H:%M:%S')
-        }
-        
-        with open(embedding_path, 'wb') as f:
-            pickle.dump(user_data, f)
-        
-        print(f"✓ Embedding saved to: {embedding_path}")
-        
+        # Step 3: Persist embedding to DB only (remove file-based storage)
+        print("\n[3/3] Persisting embedding to DB...")
+        try:
+            save_user_embedding(first_name, last_name, embedding)
+            print("✓ Embedding saved to DB")
+        except Exception as ex:
+            print(f"Failed to save embedding to DB: {ex}")
+            raise
+
         result = {
             'success': True,
             'user': f"{first_name} {last_name}",
-            'embedding_path': embedding_path,
             'detection_probability': detection_prob,
             'embedding_shape': embedding.shape
         }

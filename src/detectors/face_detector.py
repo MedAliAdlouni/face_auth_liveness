@@ -1,21 +1,28 @@
 import os
+import torch
 from facenet_pytorch import MTCNN
 
-def detect_face(image):
-    """Detect the (largest if more than one) face (if present) from the image.
+_mtcnn = None
 
-    Arguments:
-        img {PIL.Image, np.ndarray, or list} -- A PIL image, np.ndarray, torch.Tensor, or list.
+def get_mtcnn(device: str | None = None):
+    """Lazily create and return a single MTCNN instance.
+
+    Keeping a single module-level instance avoids re-loading model weights and
+    repeated CUDA allocations which are slow and can cause OOM.
+    """
+    global _mtcnn
+    if _mtcnn is None:
+        device = device or ('cuda:0' if torch.cuda.is_available() else 'cpu')
+        _mtcnn = MTCNN(image_size=160, margin=14, post_process=True, device=device)
+    return _mtcnn
+
+
+def detect_face(image):
+    """Detect (and crop) the largest face from `image`.
 
     Returns:
-        tuple(torch.tensor, float) -- If detected, cropped image of a face
-        with dimensions 3 x image_size x image_size. Optionally, the probability that a
-        face was detected.
+        tuple(torch.Tensor|None, float|None): cropped face tensor and detection probability.
     """
-    # face detection model instantiation
-    mtcnn = MTCNN(image_size=160, margin=14, post_process=True)
-
-    # face detection (forward pass through the model)
+    mtcnn = get_mtcnn()
     face_tensor, detection_proba = mtcnn(image, return_prob=True)
-
     return face_tensor, detection_proba

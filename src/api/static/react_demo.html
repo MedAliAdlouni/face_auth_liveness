@@ -1,0 +1,111 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>React Face Demo</title>
+    <style>
+      body { font-family: Arial, sans-serif; padding: 20px; }
+      #root { max-width: 720px; margin: 0 auto; }
+      video { width: 100%; max-width: 480px; border: 1px solid #ccc; }
+      .controls { margin-top: 12px; }
+      .log { margin-top: 12px; white-space: pre-wrap; background:#f7f7f7; padding:8px; border-radius:4px; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <!-- React + Babel (for demo only) -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+
+    <script type="text/babel">
+      const { useState, useRef, useEffect } = React;
+
+      function App(){
+        const videoRef = useRef(null);
+        const canvasRef = useRef(null);
+        const [streaming, setStreaming] = useState(false);
+        const [log, setLog] = useState('');
+        const [firstName, setFirstName] = useState('demo');
+        const [lastName, setLastName] = useState('user');
+
+        useEffect(()=>{
+          return ()=>{
+            if(videoRef.current && videoRef.current.srcObject){
+              videoRef.current.srcObject.getTracks().forEach(t=>t.stop());
+            }
+          }
+        },[])
+
+        const start = async ()=>{
+          setLog('Requesting camera...');
+          try{
+            const s = await navigator.mediaDevices.getUserMedia({video:true,audio:false});
+            videoRef.current.srcObject = s;
+            await videoRef.current.play();
+            setStreaming(true);
+            setLog('Camera started');
+          }catch(err){
+            setLog('Camera error: '+err.message);
+          }
+        }
+
+        const captureAndSend = async ()=>{
+          if(!streaming) return setLog('Camera not started');
+          const frames = [];
+          const ctx = canvasRef.current.getContext('2d');
+          const width = videoRef.current.videoWidth;
+          const height = videoRef.current.videoHeight;
+          canvasRef.current.width = width;
+          canvasRef.current.height = height;
+
+          setLog('Capturing 8 frames...');
+          for(let i=0;i<8;i++){
+            ctx.drawImage(videoRef.current,0,0,width,height);
+            const blob = await new Promise(res=>canvasRef.current.toBlob(res,'image/jpeg',0.85));
+            frames.push(blob);
+            await new Promise(r=>setTimeout(r, 150));
+          }
+
+          setLog('Uploading frames...');
+          const form = new FormData();
+          form.append('first_name', firstName);
+          form.append('last_name', lastName);
+          form.append('similarity_threshold', '0.65');
+          frames.forEach((b, idx)=> form.append('files', b, `frame_${idx}.jpg`));
+
+          try{
+            const res = await axios.post('/authenticate_frames', form, { headers: {'Content-Type': 'multipart/form-data'} });
+            setLog('Response:\n'+JSON.stringify(res.data, null, 2));
+          }catch(err){
+            setLog('Upload error:\n'+(err.response?JSON.stringify(err.response.data):err.message));
+          }
+        }
+
+        return (
+          <div>
+            <h2>React Face Demo</h2>
+            <div>
+              <label>First name: <input value={firstName} onChange={e=>setFirstName(e.target.value)} /></label>
+              <label style={{marginLeft:10}}>Last name: <input value={lastName} onChange={e=>setLastName(e.target.value)} /></label>
+            </div>
+            <div style={{marginTop:12}}>
+              <video ref={videoRef} playsInline autoPlay muted></video>
+            </div>
+            <div className="controls">
+              <button onClick={start}>Start Camera</button>
+              <button onClick={captureAndSend} style={{marginLeft:8}}>Capture & Authenticate</button>
+            </div>
+            <canvas ref={canvasRef} style={{display:'none'}} />
+            <div className="log">{log}</div>
+          </div>
+        )
+      }
+
+      ReactDOM.createRoot(document.getElementById('root')).render(<App />)
+    </script>
+  </body>
+</html>

@@ -3,6 +3,8 @@ import numpy as np
 from collections import deque
 import time
 
+from src.config import TEXTURE_THRESHOLD
+
 class LivenessDetector:
     def __init__(self):
         # Load face cascade
@@ -11,7 +13,7 @@ class LivenessDetector:
         )
                 
         # More strict thresholds
-        self.texture_threshold = 25  # Increased for better fake detection
+        self.texture_threshold = TEXTURE_THRESHOLD  # Read from config instead of hardcoded
         self.motion_history = deque(maxlen=30)
         self.consecutive_closed = 0
         
